@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>AR Viewer</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/aframe@1.5.0/dist/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ar.js@3.4.5/aframe/build/aframe-ar.js"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Courier New', monospace; overflow: hidden; background: #000; }
+
+    /* ── Loading screen ── */
+    #loading-screen {
+      position: fixed; inset: 0; z-index: 99999;
+      background: #000;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 20px;
+      transition: opacity 0.5s;
+    }
+    #loading-screen.fade-out { opacity: 0; pointer-events: none; }
+    #loading-screen.gone { display: none; }
+
+    #loading-logo {
+      font-size: 13px; letter-spacing: 0.25em;
+      color: rgba(255,255,255,0.9); text-transform: uppercase;
+    }
+
+    #loading-bar-wrap {
+      width: 160px; height: 2px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 2px; overflow: hidden;
+    }
+    #loading-bar {
+      height: 100%; width: 0%;
+      background: #fff;
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+
+    #loading-status {
+      font-size: 11px; letter-spacing: 0.15em;
+      color: rgba(255,255,255,0.4);
+      text-transform: uppercase;
+    }
+
+    /* ── Error screen ── */
+    #error-screen {
+      position: fixed; inset: 0; z-index: 99998;
+      background: #000;
+      display: none;
+      flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 16px;
+      padding: 32px;
+      text-align: center;
+    }
+    #error-screen.visible { display: flex; }
+    #error-icon { font-size: 40px; }
+    #error-title { font-size: 15px; color: #fff; font-weight: 700; letter-spacing: 0.1em; }
+    #error-msg { font-size: 12px; color: rgba(255,255,255,0.5); line-height: 1.8; max-width: 280px; }
+    #error-retry {
+      margin-top: 8px;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 999px;
+      color: #fff;
+      font-family: 'Courier New', monospace;
+      font-size: 12px; letter-spacing: 0.12em;
+      padding: 10px 24px; cursor: pointer;
+    }
+
+    /* ── Header ── */
+    #header {
+      position: fixed; top: 0; left: 0; right: 0;
+      z-index: 9999; pointer-events: none;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 20px;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.65), transparent);
+    }
+    #header h1 {
+      font-size: 12px; font-weight: 700;
+      letter-spacing: 0.22em; color: #fff; text-transform: uppercase;
+    }
+    #status-pill {
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(0,0,0,0.45);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 999px; padding: 4px 10px;
+    }
+    #status-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #ff4444;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    #status-dot.found { background: #44ff88; animation: none; }
+    #status-text { font-size: 10px; letter-spacing: 0.1em; color: rgba(255,255,255,0.6); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.25} }
+
+    /* ── Hint ── */
+    #hint {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 9998; text-align: center;
+      pointer-events: none; transition: opacity 0.4s;
+    }
+    #hint.hidden { opacity: 0; }
+    #hint-box {
+      background: rgba(0,0,0,0.6);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 16px; padding: 20px 28px; color: #fff;
+    }
+    #hint-box strong { font-size: 13px; }
+    #hint-box p { font-size: 12px; line-height: 1.75; color: rgba(255,255,255,0.6); margin-top: 6px; }
+    #hint-icon { font-size: 32px; margin-bottom: 4px; }
+
+    /* ── Controls ── */
+    #controls {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      z-index: 9999;
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+      padding: 12px 20px 36px;
+      background: linear-gradient(to top, rgba(0,0,0,0.7), transparent);
+    }
+
+    #gesture-hint {
+      font-size: 10px; letter-spacing: 0.12em;
+      color: rgba(255,255,255,0.35); text-transform: uppercase;
+    }
+
+    #btn-row { display: flex; gap: 10px; }
+
+    .ctrl-btn {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.22);
+      border-radius: 999px; color: #fff;
+      font-family: 'Courier New', monospace;
+      font-size: 11px; letter-spacing: 0.1em;
+      padding: 8px 18px; cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .ctrl-btn:active { background: rgba(255,255,255,0.25); transform: scale(0.96); }
+    .ctrl-btn.active { background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.55); }
+  </style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="loading-screen">
+  <div id="loading-logo">AR Viewer</div>
+  <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
+  <div id="loading-status">Initialising...</div>
+</div>
+
+<!-- Error -->
+<div id="error-screen">
+  <div id="error-icon">🚫</div>
+  <div id="error-title">Camera access denied</div>
+  <div id="error-msg" id="error-msg">
+    This app needs camera access to work.<br/><br/>
+    Please allow camera in your browser settings and reload the page.<br/><br/>
+    <strong>Note:</strong> Must be served over HTTPS or localhost.
+  </div>
+  <button id="error-retry" onclick="location.reload()">Reload</button>
+</div>
+
+<!-- Header -->
+<div id="header">
+  <h1>AR Viewer</h1>
+  <div id="status-pill" style="pointer-events:none;">
+    <div id="status-dot"></div>
+    <span id="status-text">scanning</span>
+  </div>
+</div>
+
+<!-- Hint -->
+<div id="hint">
+  <div id="hint-box">
+    <div id="hint-icon">📄</div>
+    <strong>Point camera at Hiro marker</strong>
+    <p>Print or show the Hiro marker image.<br/>Hold steady over it to lock on.</p>
+  </div>
+</div>
+
+<!-- Controls -->
+<div id="controls">
+  <div id="gesture-hint">Pinch to scale &nbsp;·&nbsp; One finger to rotate</div>
+  <div id="btn-row">
+    <button class="ctrl-btn active" id="btn-spin" onclick="toggleSpin()">spin on</button>
+    <button class="ctrl-btn" onclick="resetModel()">reset</button>
+  </div>
+</div>
+
+<!-- AR Scene -->
+<a-scene
+  vr-mode-ui="enabled: false"
+  arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+  renderer="antialias: true; alpha: true;"
+  embedded
+  id="ar-scene"
+>
+  <a-assets timeout="15000">
+    <a-asset-item id="custom-model" src="model.glb"></a-asset-item>
+  </a-assets>
+
+  <a-marker preset="hiro" id="hiro-marker">
+    <a-entity
+      id="glb-model"
+      gltf-model="#custom-model"
+      position="0 0 0"
+      scale="1 1 1"
+      rotation="0 0 0"
+      animation="property: rotation; to: 0 360 0; loop: true; dur: 5000; easing: linear;"
+    ></a-entity>
+    <a-ring
+      position="0 0.01 0" rotation="-90 0 0"
+      radius-inner="0.55" radius-outer="0.62"
+      color="#ffffff" opacity="0.15"
+    ></a-ring>
+  </a-marker>
+
+  <a-entity camera></a-entity>
+</a-scene>
+
+<script>
+  // ── Loading progress ──
+  const bar = document.getElementById('loading-bar');
+  const statusEl = document.getElementById('loading-status');
+  const loadingScreen = document.getElementById('loading-screen');
+  const errorScreen = document.getElementById('error-screen');
+
+  function setProgress(pct, msg) {
+    bar.style.width = pct + '%';
+    statusEl.textContent = msg;
+  }
+
+  setProgress(20, 'Loading libraries...');
+
+  // Detect camera errors early
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+    setProgress(100, 'Error');
+    setTimeout(() => {
+      document.getElementById('error-msg').innerHTML =
+        'This app must be served over <strong>HTTPS</strong> or localhost.<br/><br/>' +
+        'Open it via GitHub Pages or a local dev server (e.g. VS Code Live Server).';
+      loadingScreen.classList.add('fade-out');
+      setTimeout(() => loadingScreen.classList.add('gone'), 500);
+      errorScreen.classList.add('visible');
+    }, 600);
+  }
+
+  const scene = document.getElementById('ar-scene');
+  const model = document.getElementById('glb-model');
+
+  scene.addEventListener('loaded', () => setProgress(50, 'Camera starting...'));
+
+  // Asset loaded
+  document.getElementById('custom-model').addEventListener('loaded', () => {
+    setProgress(80, 'Model ready...');
+  });
+
+  // Camera stream started = renderer running
+  scene.addEventListener('renderstart', () => {
+    setProgress(100, 'Ready!');
+    setTimeout(() => {
+      loadingScreen.classList.add('fade-out');
+      setTimeout(() => loadingScreen.classList.add('gone'), 500);
+    }, 400);
+  });
+
+  // Camera permission error
+  navigator.mediaDevices && navigator.mediaDevices.getUserMedia({ video: true })
+    .catch(() => {
+      setProgress(100, 'Error');
+      loadingScreen.classList.add('fade-out');
+      setTimeout(() => {
+        loadingScreen.classList.add('gone');
+        errorScreen.classList.add('visible');
+      }, 500);
+    });
+
+  // Timeout fallback — if renderstart never fires
+  setTimeout(() => {
+    if (!loadingScreen.classList.contains('fade-out')) {
+      setProgress(100, 'Ready!');
+      loadingScreen.classList.add('fade-out');
+      setTimeout(() => loadingScreen.classList.add('gone'), 500);
+    }
+  }, 8000);
+
+  // ── Marker tracking ──
+  const marker = document.getElementById('hiro-marker');
+  const hint = document.getElementById('hint');
+  const dot = document.getElementById('status-dot');
+  const statusText = document.getElementById('status-text');
+
+  marker.addEventListener('markerFound', () => {
+    hint.classList.add('hidden');
+    dot.classList.add('found');
+    statusText.textContent = 'locked';
+  });
+  marker.addEventListener('markerLost', () => {
+    hint.classList.remove('hidden');
+    dot.classList.remove('found');
+    statusText.textContent = 'scanning';
+  });
+
+  // ── Spin toggle ──
+  let spinning = true;
+  function toggleSpin() {
+    spinning = !spinning;
+    const anim = model.getAttribute('animation');
+    model.setAttribute('animation', Object.assign({}, anim, { paused: !spinning }));
+    const btn = document.getElementById('btn-spin');
+    btn.textContent = spinning ? 'spin on' : 'spin off';
+    btn.classList.toggle('active', spinning);
+  }
+
+  // ── Reset ──
+  let currentScale = 1;
+  let currentRotY = 0;
+  function resetModel() {
+    currentScale = 1;
+    currentRotY = 0;
+    model.setAttribute('scale', '1 1 1');
+    model.setAttribute('rotation', '0 0 0');
+    if (!spinning) toggleSpin();
+  }
+
+  // ── Touch gestures: pinch-to-scale + one-finger rotate ──
+  let touches = {};
+  let lastPinchDist = null;
+  let lastTouchX = null;
+  const MIN_SCALE = 0.1;
+  const MAX_SCALE = 5;
+
+  function getTouchDist(t) {
+    const keys = Object.keys(t);
+    if (keys.length < 2) return null;
+    const a = t[keys[0]], b = t[keys[1]];
+    return Math.hypot(b.x - a.x, b.y - a.y);
+  }
+
+  document.addEventListener('touchstart', e => {
+    // Don't intercept button taps
+    if (e.target.closest('#controls') || e.target.closest('#header')) return;
+    Array.from(e.changedTouches).forEach(t => {
+      touches[t.identifier] = { x: t.clientX, y: t.clientY };
+    });
+    const dist = getTouchDist(touches);
+    if (dist) lastPinchDist = dist;
+    if (Object.keys(touches).length === 1) {
+      lastTouchX = Object.values(touches)[0].x;
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('touchmove', e => {
+    if (e.target.closest('#controls') || e.target.closest('#header')) return;
+    Array.from(e.changedTouches).forEach(t => {
+      touches[t.identifier] = { x: t.clientX, y: t.clientY };
+    });
+
+    const numTouches = Object.keys(touches).length;
+
+    if (numTouches >= 2) {
+      // Pinch to scale
+      const dist = getTouchDist(touches);
+      if (dist && lastPinchDist) {
+        const ratio = dist / lastPinchDist;
+        currentScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, currentScale * ratio));
+        model.setAttribute('scale', `${currentScale} ${currentScale} ${currentScale}`);
+      }
+      lastPinchDist = dist;
+      lastTouchX = null;
+    } else if (numTouches === 1) {
+      // One finger rotate (Y axis) — only when not spinning
+      const x = Object.values(touches)[0].x;
+      if (lastTouchX !== null && spinning === false) {
+        const dx = x - lastTouchX;
+        currentRotY += dx * 0.5;
+        model.setAttribute('rotation', `0 ${currentRotY} 0`);
+      }
+      lastTouchX = x;
+      lastPinchDist = null;
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('touchend', e => {
+    Array.from(e.changedTouches).forEach(t => delete touches[t.identifier]);
+    if (Object.keys(touches).length < 2) lastPinchDist = null;
+    if (Object.keys(touches).length === 0) lastTouchX = null;
+  });
+</script>
+
+</body>
+</html>
